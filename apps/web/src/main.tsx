@@ -136,6 +136,7 @@ type ReleaseManifest = {
 };
 
 const RELEASE_MANIFEST_URL = "https://downloads.renamer.diegodella.ar/release.json";
+const API_BASE_URL = "https://api.renamer.diegodella.ar";
 
 function formatBytes(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -189,7 +190,7 @@ function Download() {
             {platform && release
               ? <>
                   <p>Versión {release.version} · {format} · {formatBytes(platform.size_bytes)}</p>
-                  <a className="button download-button" href={platform.url}>Descargar {format} <Icon name="download"/></a>
+                  <a className="button download-button" href={`${API_BASE_URL}/v1/download/${key}`}>Descargar {format} <Icon name="download"/></a>
                   <p className="checksum" title={platform.sha256}>SHA-256: <code>{platform.sha256}</code></p>
                 </>
               : <p>{loading ? "Consultando versión disponible…" : "Build todavía no publicado."}</p>}
@@ -229,8 +230,130 @@ function About() {
   </main>;
 }
 
+type AdminMetrics = {
+  since: string;
+  downloads: { total: number; macos: number; windows: number };
+  api: { total: number; successful: number; errors: number; unique_users: number; p50_ms: number; p95_ms: number };
+  usage: { analyses: number; input_tokens: number; output_tokens: number };
+  daily: Array<{ date: string; downloads: number; api_requests: number; api_errors: number }>;
+  recent_errors: Array<{ occurred_at: string; route: string; status: number; duration_ms: number; request_id: string }>;
+};
+
+type AdminRange = "24h" | "7d" | "30d";
+
+async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, init);
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as { message?: string } | null;
+    throw new Error(body?.message ?? `Error ${response.status}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+function AdminLogin({ onSession }: { onSession: (token: string) => void }) {
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [sent, setSent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      if (!sent) {
+        await apiJson("/v1/auth/otp", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ email }),
+        });
+        setSent(true);
+      } else {
+        const session = await apiJson<{ access_token: string }>("/v1/auth/verify", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ email, token: code }),
+        });
+        sessionStorage.setItem("np_admin_token", session.access_token);
+        onSession(session.access_token);
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "No se pudo ingresar");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <main className="admin-shell login-mode"><section className="admin-login">
+    <p className="eyebrow">EXPEDIENTE RESERVADO · ADMIN</p>
+    <div className="admin-lock"><Icon name="lock" size={30}/><span>NP<br/>OPS</span></div>
+    <h1>Control de operaciones.</h1>
+    <p>Acceso por código de un solo uso. Solo emails autorizados.</p>
+    <form onSubmit={(event) => void submit(event)}>
+      <label>Email administrador<input type="email" required autoComplete="email" value={email} disabled={sent} onChange={(event) => setEmail(event.target.value)}/></label>
+      {sent && <label>Código recibido<input type="text" required inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6,8}" value={code} onChange={(event) => setCode(event.target.value)}/></label>}
+      {error && <p className="admin-error" role="alert">{error}</p>}
+      <button className="button" disabled={busy}>{busy ? "Verificando…" : sent ? "Abrir dashboard" : "Enviar código"}<Icon name="arrow"/></button>
+    </form>
+  </section></main>;
+}
+
+function Admin() {
+  const [token, setToken] = useState(() => sessionStorage.getItem("np_admin_token") ?? "");
+  const [range, setRange] = useState<AdminRange>("7d");
+  const [metrics, setMetrics] = useState<AdminMetrics | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!token) return;
+    const controller = new AbortController();
+    setError("");
+    apiJson<AdminMetrics>(`/v1/admin/metrics?range=${range}`, {
+      signal: controller.signal,
+      headers: { authorization: `Bearer ${token}` },
+    }).then(setMetrics).catch((reason: unknown) => {
+      if (reason instanceof DOMException && reason.name === "AbortError") return;
+      setError(reason instanceof Error ? reason.message : "Métricas no disponibles");
+      if (reason instanceof Error && /Authentication|Admin access|401|403/i.test(reason.message)) {
+        sessionStorage.removeItem("np_admin_token");
+        setToken("");
+      }
+    });
+    return () => controller.abort();
+  }, [token, range]);
+
+  if (!token) return <AdminLogin onSession={setToken}/>;
+  const maxDaily = Math.max(1, ...(metrics?.daily.map((day) => Math.max(day.downloads, day.api_requests)) ?? [1]));
+  const errorRate = metrics?.api.total ? (metrics.api.errors / metrics.api.total) * 100 : 0;
+
+  return <main className="admin-shell">
+    <section className="admin-heading"><div><p className="eyebrow">NAMING POLICE · OPERACIONES</p><h1>Parte diario.</h1><p>Señales del producto, sin contenido de archivos ni rutas locales.</p></div><div className="admin-controls">
+      <div role="group" aria-label="Período">{(["24h", "7d", "30d"] as AdminRange[]).map((value) => <button className={range === value ? "active" : ""} onClick={() => setRange(value)} key={value}>{value}</button>)}</div>
+      <button onClick={() => { sessionStorage.removeItem("np_admin_token"); setToken(""); }}>Salir</button>
+    </div></section>
+    {error && <p className="admin-error section" role="alert">{error}</p>}
+    {!metrics ? <section className="admin-loading">Cargando expediente…</section> : <>
+      <section className="metric-grid">
+        <article className="metric-primary"><span>DESCARGAS</span><strong>{metrics.downloads.total}</strong><small>macOS {metrics.downloads.macos} · Windows {metrics.downloads.windows}</small></article>
+        <article><span>CONSULTAS API</span><strong>{metrics.api.total}</strong><small>{metrics.api.unique_users} usuarios</small></article>
+        <article className={errorRate > 5 ? "metric-alert" : ""}><span>TASA DE ERROR</span><strong>{errorRate.toFixed(1)}%</strong><small>{metrics.api.errors} respuestas con error</small></article>
+        <article><span>LATENCIA P95</span><strong>{metrics.api.p95_ms}<i>ms</i></strong><small>p50 {metrics.api.p50_ms} ms</small></article>
+        <article><span>ANÁLISIS IA</span><strong>{metrics.usage.analyses}</strong><small>{(metrics.usage.input_tokens + metrics.usage.output_tokens).toLocaleString("es-AR")} tokens</small></article>
+      </section>
+      <section className="ops-grid">
+        <article className="activity-chart"><header><p className="eyebrow">ACTIVIDAD DIARIA</p><span>API / DESCARGAS / ERRORES</span></header><div className="bar-chart">
+          {metrics.daily.map((day) => <div className="bar-day" key={day.date} title={`${day.date}: ${day.api_requests} API, ${day.downloads} descargas`}><div className="bar-stack"><i className="bar-api" style={{ height: `${Math.max(2, day.api_requests / maxDaily * 100)}%` }}/><i className="bar-download" style={{ height: `${Math.max(2, day.downloads / maxDaily * 100)}%` }}/><i className="bar-error" style={{ height: `${Math.max(0, day.api_errors / maxDaily * 100)}%` }}/></div><span>{day.date.slice(5)}</span></div>)}
+        </div></article>
+        <article className="platform-card"><p className="eyebrow">DISTRIBUCIÓN</p><h2>{metrics.downloads.total ? Math.round(metrics.downloads.macos / metrics.downloads.total * 100) : 0}%</h2><p>Apple Silicon</p><div className="platform-meter"><i style={{ width: `${metrics.downloads.total ? metrics.downloads.macos / metrics.downloads.total * 100 : 0}%` }}/></div><small>Windows representa {metrics.downloads.total ? Math.round(metrics.downloads.windows / metrics.downloads.total * 100) : 0}%</small></article>
+      </section>
+      <section className="error-ledger"><header><div><p className="eyebrow">REGISTRO DE INCIDENTES</p><h2>Errores recientes</h2></div><span>{metrics.recent_errors.length} registros</span></header>{metrics.recent_errors.length === 0 ? <p className="clean-ledger">Sin errores en este período.</p> : <div className="error-table" role="table"><div role="row"><b>Hora</b><b>Ruta</b><b>Estado</b><b>Latencia</b></div>{metrics.recent_errors.map((item) => <div role="row" key={item.request_id}><span>{new Date(item.occurred_at).toLocaleString("es-AR")}</span><code>{item.route}</code><strong>{item.status}</strong><span>{item.duration_ms} ms</span></div>)}</div>}</section>
+    </>}
+  </main>;
+}
+
 function Login() {
-  return <main className="center-page"><section className="login-card"><div className="privacy-seal"><Icon name="lock"/><span>ACCESO</span></div><p className="eyebrow">INGRESAR</p><h1>Tu sesión vive dentro de Naming Police.</h1><p>El login se usa en la app desktop para acceder a la cuota de IA alojada. Todavía no existe un dashboard web: preferimos no inventar una pantalla sin función.</p><a className="button" href="/download">Ir a descargas <Icon name="arrow"/></a><a className="text-link" href="/privacy">Cómo protegemos tus datos</a></section></main>;
+  return <main className="center-page"><section className="login-card"><div className="privacy-seal"><Icon name="lock"/><span>ACCESO</span></div><p className="eyebrow">INGRESAR</p><h1>Tu sesión vive dentro de Naming Police.</h1><p>El login se usa en la app desktop para acceder a la cuota de IA alojada. El panel operativo está reservado a administradores autorizados.</p><a className="button" href="/download">Ir a descargas <Icon name="arrow"/></a><a className="text-link" href="/privacy">Cómo protegemos tus datos</a></section></main>;
 }
 
 function Terms() {
@@ -249,17 +372,18 @@ function PageHero({ eyebrow, title, text }: { eyebrow: string; title: React.Reac
 
 const pages: Record<string, () => React.ReactNode> = {
   "/": Home, "/how-it-works": HowItWorks, "/download": Download, "/pricing": Pricing,
-  "/privacy": Privacy, "/about": About, "/login": Login, "/terms": Terms,
+  "/privacy": Privacy, "/about": About, "/login": Login, "/terms": Terms, "/admin": Admin,
 };
 
 function App() {
-  const Page = pages[window.location.pathname.replace(/\/+$/, "") || "/"] ?? NotFound;
+  const path = window.location.pathname.replace(/\/+$/, "") || "/";
+  const Page = pages[path] ?? NotFound;
   useEffect(() => {
     window.scrollTo(0, 0);
     const pageName = window.location.pathname === "/" ? "" : ` — ${document.querySelector("h1")?.textContent ?? ""}`;
     document.title = `Naming Police${pageName}`;
   }, []);
-  return <><Header/><Page/><Footer/></>;
+  return <><Header/><Page/>{path !== "/admin" && <Footer/>}</>;
 }
 
 createRoot(document.getElementById("root")!).render(<StrictMode><App/></StrictMode>);

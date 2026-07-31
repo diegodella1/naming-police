@@ -10,4 +10,6 @@ export interface Env {
   MAX_PAYLOAD_BYTES: string;
   ALLOWED_ORIGIN: string;
   NOMINATIM_BASE_URL: string;
+  ADMIN_EMAILS: string;
+  DOWNLOAD_MANIFEST_URL: string;
 }
