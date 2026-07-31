@@ -152,7 +152,7 @@ jobs:
             name="$(basename "$asset")"
             pnpm --filter @naming-police/api exec wrangler r2 object put \
               "naming-police-releases/releases/${GITHUB_REF_NAME}/${name}" \
-              --file "$asset" --remote \
+              --file "${GITHUB_WORKSPACE}/${asset}" --remote \
               --cache-control "public, max-age=31536000, immutable"
           done
       - name: Activate updater and download page
@@ -162,9 +162,9 @@ jobs:
         run: |
           pnpm --filter @naming-police/api exec wrangler r2 object put \
             naming-police-releases/latest.json \
-            --file release-public/latest.json --remote \
+            --file "${GITHUB_WORKSPACE}/release-public/latest.json" --remote \
             --content-type application/json --cache-control "no-cache"
           pnpm --filter @naming-police/api exec wrangler r2 object put \
             naming-police-releases/release.json \
-            --file release-public/release.json --remote \
+            --file "${GITHUB_WORKSPACE}/release-public/release.json" --remote \
             --content-type application/json --cache-control "no-cache"
