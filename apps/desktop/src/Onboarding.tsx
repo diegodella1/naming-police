@@ -12,7 +12,30 @@ export function Onboarding({ onPick, onComplete }: Props) {
   const [path, setPath] = useState("");
   const [preset, setPreset] = useState<PresetId>("general");
   const [provider, setProvider] = useState<"hosted" | "byok" | "local">("hosted");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string>();
   const steps = ["Promesa", "Carpeta", "Preset", "Análisis", "Listo"];
+  const pickFolder = async () => {
+    setError(undefined);
+    try {
+      const selected = await onPick();
+      if (selected) setPath(selected);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+  const complete = async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    setError(undefined);
+    try {
+      await onComplete(path, preset, "ask", provider);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setSubmitting(false);
+    }
+  };
   return (
     <main className="onboarding-shell">
       <aside className="onboarding-aside">
@@ -44,9 +67,10 @@ export function Onboarding({ onPick, onComplete }: Props) {
           <div className="onboarding-step">
             <p className="eyebrow">PASO 1 · JURISDICCIÓN</p><h1>Elegí una carpeta.</h1>
             <p>Downloads o Screenshots son buenos puntos de partida. Carpetas riesgosas serán bloqueadas.</p>
-            <button className="folder-picker" onClick={() => void onPick().then((selected) => selected && setPath(selected))}>
+            <button className="folder-picker" onClick={() => void pickFolder()}>
               <FolderPlus /> <span>{path || "Seleccionar carpeta local"}</span>
             </button>
+            {error ? <p className="inline-error" role="alert">{error}</p> : null}
             <button className="primary large" disabled={!path} onClick={() => setStep(2)}>Continuar <ArrowRight /></button>
           </div>
         ) : null}
@@ -91,7 +115,10 @@ export function Onboarding({ onPick, onComplete }: Props) {
             <div className="empty-stamp"><ShieldCheck size={42} /></div>
             <p className="eyebrow">CONFIGURACIÓN COMPLETA</p><h1>Patrulla lista.</h1>
             <p>Vamos a observar archivos nuevos. Las primeras propuestas llegarán a tu bandeja.</p>
-            <button className="primary large" onClick={() => void onComplete(path, preset, "ask", provider)}>Abrir Naming Police <ArrowRight /></button>
+            {error ? <p className="inline-error" role="alert">{error}</p> : null}
+            <button className="primary large" disabled={submitting} onClick={() => void complete()}>
+              {submitting ? "Abriendo…" : "Abrir Naming Police"} {!submitting ? <ArrowRight /> : null}
+            </button>
           </div>
         ) : null}
       </section>

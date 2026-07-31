@@ -97,6 +97,9 @@ jobs:
           VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           VITE_HOSTED_API_URL: ${{ secrets.HOSTED_API_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          HOSTED_API_URL: ${{ secrets.HOSTED_API_URL }}
         run: pnpm --filter @naming-police/desktop exec tauri build --target ${{ matrix.target }}
       - uses: actions/upload-artifact@v4
         with:

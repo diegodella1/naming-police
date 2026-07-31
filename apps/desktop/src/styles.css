@@ -163,6 +163,9 @@ select, input { border: 1px solid var(--line); background: #fffcf3; min-height: 
 .usage-bar > div { height: 100%; background: var(--green); }
 .success-line { color: var(--green) !important; display: flex; align-items: center; gap: 5px; }
 .inline-actions { display: flex; gap: 8px; margin-top: 8px; }
+.inline-error { width: 100%; box-sizing: border-box; color: #7f2c1f !important; background: #f6eae4; border-left: 4px solid #7f2c1f; padding: 11px 13px; font-size: 14px !important; text-align: left; }
+.hosted-login-banner { display: flex; justify-content: space-between; align-items: center; gap: 18px; margin-bottom: 22px; padding: 12px 15px; border: 1px solid #c89b32; background: #fff3c4; }
+.hosted-login-banner .ghost { flex: 0 0 auto; }
 .transmission-card > div { display: flex; gap: 9px; align-items: center; }
 .transmission-card h2 { margin: 0; }
 .transmission-card ul { padding: 0; display: flex; list-style: none; gap: 15px; flex-wrap: wrap; }

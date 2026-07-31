@@ -29,6 +29,8 @@ export function Privacy({
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [otpSent, setOtpSent] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState<string>();
   return (
     <section>
       <header className="page-header">
@@ -73,13 +75,22 @@ export function Privacy({
             <form
               onSubmit={(event) => {
                 event.preventDefault();
-                void onLogin(email, otpSent ? code : undefined).then((status) => setOtpSent(status === "sent"));
+                if (authBusy) return;
+                setAuthBusy(true);
+                setAuthError(undefined);
+                void onLogin(email, otpSent ? code : undefined)
+                  .then((status) => setOtpSent(status === "sent"))
+                  .catch((cause) => setAuthError(cause instanceof Error ? cause.message : String(cause)))
+                  .finally(() => setAuthBusy(false));
               }}
             >
               <p>Ingresá con código email. Sin contraseña ni navegador externo.</p>
               <input type="email" required placeholder="vos@ejemplo.com" value={email} onChange={(event) => setEmail(event.target.value)} />
               {otpSent ? <input required inputMode="numeric" pattern="[0-9]{6}" placeholder="Código de 6 dígitos" value={code} onChange={(event) => setCode(event.target.value)} /> : null}
-              <button className="primary" type="submit">{otpSent ? "Verificar código" : "Enviar código"}</button>
+              {authError ? <p className="inline-error" role="alert">{authError}</p> : null}
+              <button className="primary" type="submit" disabled={authBusy}>
+                {authBusy ? "Procesando…" : otpSent ? "Verificar código" : "Enviar código"}
+              </button>
             </form>
           )}
         </article>

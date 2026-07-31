@@ -27,6 +27,47 @@ const DEFAULT_EXTENSIONS: &[&str] = &[
 ];
 const KEYRING_SERVICE: &str = "ar.diegodella.namingpolice";
 
+#[cfg(debug_assertions)]
+fn hosted_api_url() -> &'static str {
+    option_env!("HOSTED_API_URL").unwrap_or("http://127.0.0.1:8787")
+}
+
+#[cfg(not(debug_assertions))]
+fn hosted_api_url() -> &'static str {
+    env!(
+        "HOSTED_API_URL",
+        "HOSTED_API_URL is required for release builds"
+    )
+}
+
+#[cfg(debug_assertions)]
+fn supabase_url() -> Result<&'static str> {
+    option_env!("SUPABASE_URL")
+        .ok_or_else(|| AppError::Secret("SUPABASE_URL no configurada en build".into()))
+}
+
+#[cfg(not(debug_assertions))]
+fn supabase_url() -> Result<&'static str> {
+    Ok(env!(
+        "SUPABASE_URL",
+        "SUPABASE_URL is required for release builds"
+    ))
+}
+
+#[cfg(debug_assertions)]
+fn supabase_anon_key() -> Result<&'static str> {
+    option_env!("SUPABASE_ANON_KEY")
+        .ok_or_else(|| AppError::Secret("SUPABASE_ANON_KEY no configurada en build".into()))
+}
+
+#[cfg(not(debug_assertions))]
+fn supabase_anon_key() -> Result<&'static str> {
+    Ok(env!(
+        "SUPABASE_ANON_KEY",
+        "SUPABASE_ANON_KEY is required for release builds"
+    ))
+}
+
 pub struct Core {
     pub database: Arc<Database>,
     app: AppHandle,
@@ -117,7 +158,7 @@ impl Core {
             }
         }
         let token = self.secret("access_token").ok()?;
-        let api_url = option_env!("HOSTED_API_URL").unwrap_or("http://127.0.0.1:8787");
+        let api_url = hosted_api_url();
         let fetched = tauri::async_runtime::block_on(async {
             reqwest::Client::new()
                 .get(format!("{api_url}/v1/usage"))
@@ -163,7 +204,7 @@ impl Core {
             .iter()
             .map(|value| (*value).to_string())
             .collect::<Vec<_>>();
-        self.database.add_folder(
+        let stored_id = self.database.add_folder(
             &id,
             &path.to_string_lossy(),
             &display_name,
@@ -171,7 +212,7 @@ impl Core {
             mode.as_str(),
             &extensions,
         )?;
-        if let Some(folder) = self.database.folder(&id)? {
+        if let Some(folder) = self.database.folder(&stored_id)? {
             self.watch(&folder)?;
         }
         self.emit_change();
@@ -184,6 +225,7 @@ impl Core {
             .lock()
             .map_err(|_| AppError::Validation("Watcher bloqueado".into()))?;
         if let Some(watcher) = guard.as_mut() {
+            let _ = watcher.unwatch(Path::new(&folder.path));
             watcher
                 .watch(
                     Path::new(&folder.path),
@@ -448,13 +490,18 @@ impl Core {
                 ))
             }
             "hosted" => {
-                let mut token = self.secret("access_token")?;
-                let api_url = option_env!("HOSTED_API_URL").unwrap_or("http://127.0.0.1:8787");
+                let Ok(mut token) = self.secret("access_token") else {
+                    return Ok(ai::local_fallback(request_id, preset, extracted));
+                };
+                let api_url = hosted_api_url();
                 let first = tauri::async_runtime::block_on(ai::hosted(
                     api_url, &token, request_id, preset, locale, extracted,
                 ));
                 if matches!(&first, Err(AppError::Provider(message)) if message.contains("401")) {
-                    token = self.refresh_session()?;
+                    let Ok(refreshed) = self.refresh_session() else {
+                        return Ok(ai::local_fallback(request_id, preset, extracted));
+                    };
+                    token = refreshed;
                     tauri::async_runtime::block_on(ai::hosted(
                         api_url, &token, request_id, preset, locale, extracted,
                     ))
@@ -467,10 +514,8 @@ impl Core {
     }
 
     fn refresh_session(&self) -> Result<String> {
-        let supabase_url = option_env!("SUPABASE_URL")
-            .ok_or_else(|| AppError::Secret("SUPABASE_URL no configurada en build".into()))?;
-        let anon_key = option_env!("SUPABASE_ANON_KEY")
-            .ok_or_else(|| AppError::Secret("SUPABASE_ANON_KEY no configurada en build".into()))?;
+        let supabase_url = supabase_url()?;
+        let anon_key = supabase_anon_key()?;
         let refresh_token = self.secret("refresh_token")?;
         let refresh_for_request = refresh_token.clone();
         let response: Value = tauri::async_runtime::block_on(async {

@@ -63,10 +63,19 @@ export default function App() {
     privacy: <Privacy settings={snapshot.settings} authenticated={snapshot.authenticated} used={snapshot.usage?.used ?? 0} limit={snapshot.usage?.limit ?? 100} onProvider={(provider) => run(() => bridge.setSetting("provider", provider))} onSaveKey={(key) => run(() => bridge.setByok(key), "API key guardada")} onDeleteKey={() => run(bridge.deleteByok, "API key eliminada")} onLogin={async (email, code) => { if (!code) { await requestEmailOtp(email); notify("Código enviado"); return "sent"; } const tokens = await verifyEmailOtp(email, code); await bridge.storeSession(tokens.accessToken, tokens.refreshToken); await refresh(); notify("Sesión iniciada"); return "verified"; }} onSignOut={() => run(bridge.signOut, "Sesión cerrada")} />,
     settings: <Settings settings={snapshot.settings} onSetting={(key, value) => run(() => bridge.setSetting(key, value))} onExport={() => run(async () => { const content = await bridge.exportConfig(); await navigator.clipboard.writeText(content); }, "Configuración copiada")} onImport={() => run(async () => { const value = await navigator.clipboard.readText(); await bridge.importConfig(value); }, "Configuración importada")} onClearHistory={() => run(bridge.clearHistory, "Historial eliminado")} />,
   }[view];
+  const hostedNeedsLogin = snapshot.settings.provider === "hosted" && !snapshot.authenticated;
   return (
     <div className="app-shell">
       <Sidebar view={view} locale={snapshot.settings.locale} pending={snapshot.suggestions.length} watcherActive={snapshot.watcher_active} onNavigate={setView} />
-      <main className="content">{page}</main>
+      <main className="content">
+        {hostedNeedsLogin ? (
+          <div className="hosted-login-banner" role="status">
+            <span>Hosted AI necesita iniciar sesión. Hasta entonces, el análisis usa modo local.</span>
+            <button className="ghost" onClick={() => setView("privacy")}>Iniciar sesión</button>
+          </div>
+        ) : null}
+        {page}
+      </main>
       <Toast toast={toast} />
     </div>
   );

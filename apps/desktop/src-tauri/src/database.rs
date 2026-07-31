@@ -126,11 +126,20 @@ impl Database {
         preset: &str,
         mode: &str,
         extensions: &[String],
-    ) -> Result<()> {
-        self.conn()?.execute(
+    ) -> Result<String> {
+        let stored_id = self.conn()?.query_row(
             "INSERT INTO watched_folders(
                 id,path,display_name,preset,mode,extensions_json,created_at
-             ) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+             ) VALUES(?1,?2,?3,?4,?5,?6,?7)
+             ON CONFLICT(path) DO UPDATE SET
+                display_name=excluded.display_name,
+                preset=excluded.preset,
+                mode=excluded.mode,
+                extensions_json=excluded.extensions_json,
+                is_removed=0,
+                is_paused=0,
+                pause_until=NULL
+             RETURNING id",
             params![
                 id,
                 path,
@@ -140,8 +149,9 @@ impl Database {
                 serde_json::to_string(extensions)?,
                 Utc::now().to_rfc3339()
             ],
+            |row| row.get(0),
         )?;
-        Ok(())
+        Ok(stored_id)
     }
 
     pub fn remove_folder(&self, id: &str) -> Result<()> {
@@ -580,5 +590,40 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn adding_same_path_is_idempotent_and_reactivates_folder() {
+        let directory = tempdir().unwrap();
+        let database = Database::open(&directory.path().join("test.db")).unwrap();
+        let first_id = database
+            .add_folder(
+                "folder-1",
+                "/tmp/downloads",
+                "Downloads",
+                "general",
+                "ask",
+                &["pdf".into()],
+            )
+            .unwrap();
+        database.remove_folder(&first_id).unwrap();
+
+        let retried_id = database
+            .add_folder(
+                "folder-2",
+                "/tmp/downloads",
+                "Downloads",
+                "screenshots",
+                "observe",
+                &["png".into()],
+            )
+            .unwrap();
+
+        assert_eq!(retried_id, first_id);
+        let folders = database.list_folders().unwrap();
+        assert_eq!(folders.len(), 1);
+        assert_eq!(folders[0].preset, "screenshots");
+        assert_eq!(folders[0].mode, "observe");
+        assert_eq!(folders[0].extensions, vec!["png"]);
     }
 }
