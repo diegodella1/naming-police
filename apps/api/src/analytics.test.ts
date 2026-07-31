@@ -39,7 +39,8 @@ describe("analytics", () => {
       requestId: "request-1",
     });
 
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(requestInit.body))).toEqual({
       user_id: "user-1",
       route: "/v1/analyze",
       method: "POST",
@@ -56,7 +57,8 @@ describe("analytics", () => {
     const since = new Date("2026-07-01T00:00:00.000Z");
 
     await expect(getAdminMetrics(env, since)).resolves.toEqual(metrics);
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(requestInit.body))).toEqual({
       p_since: "2026-07-01T00:00:00.000Z",
     });
   });
