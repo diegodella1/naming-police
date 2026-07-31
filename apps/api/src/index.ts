@@ -59,6 +59,9 @@ async function requestAdminOtp(request: Request, env: Env): Promise<Response> {
     headers: { apikey: env.SUPABASE_ANON_KEY, "content-type": "application/json" },
     body: JSON.stringify({ email, create_user: true }),
   });
+  if (upstream.status === 429) {
+    return apiError(429, "rate_limited", "Esperá un minuto antes de pedir otro acceso", true);
+  }
   if (!upstream.ok) return apiError(503, "internal", "Unable to send access code", true);
   return json({ sent: true });
 }

@@ -16,11 +16,12 @@ export async function authenticate(request: Request, env: Env): Promise<Authenti
     ? new TextEncoder().encode(env.SUPABASE_JWT_SECRET)
     : remoteJwks(env);
   const { payload } = await jwtVerify(token, verificationKey, {
-    issuer: env.SUPABASE_JWT_ISSUER,
+    ...(!env.SUPABASE_JWT_SECRET ? { issuer: env.SUPABASE_JWT_ISSUER } : {}),
     audience: "authenticated",
     ...(env.SUPABASE_JWT_SECRET ? { algorithms: ["HS256"] } : {}),
   });
   if (!payload.sub) throw new Error("missing_subject");
+  if (payload.iss && payload.iss !== env.SUPABASE_JWT_ISSUER) throw new Error("invalid_issuer");
   return {
     id: payload.sub,
     ...(typeof payload.email === "string" ? { email: payload.email } : {}),
