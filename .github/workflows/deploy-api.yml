@@ -1,0 +1,54 @@
+name: Deploy hosted API
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "apps/api/**"
+      - "packages/contracts/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/deploy-api.yml"
+
+concurrency:
+  group: naming-police-api-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @naming-police/api typecheck
+      - run: pnpm --filter @naming-police/api test
+      - name: Configure production secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_JWT_ISSUER: ${{ secrets.SUPABASE_JWT_ISSUER }}
+        run: |
+          printf '%s' "$OPENAI_API_KEY" | pnpm --filter @naming-police/api exec wrangler secret put OPENAI_API_KEY
+          printf '%s' "$SUPABASE_URL" | pnpm --filter @naming-police/api exec wrangler secret put SUPABASE_URL
+          printf '%s' "$SUPABASE_ANON_KEY" | pnpm --filter @naming-police/api exec wrangler secret put SUPABASE_ANON_KEY
+          printf '%s' "$SUPABASE_SERVICE_ROLE_KEY" | pnpm --filter @naming-police/api exec wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+          printf '%s' "$SUPABASE_JWT_ISSUER" | pnpm --filter @naming-police/api exec wrangler secret put SUPABASE_JWT_ISSUER
+      - name: Deploy Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm --filter @naming-police/api exec wrangler deploy
+      - name: Verify health
+        run: curl --fail --retry 6 --retry-all-errors https://api.renamer.diegodella.ar/v1/health
