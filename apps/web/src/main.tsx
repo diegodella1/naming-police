@@ -300,7 +300,16 @@ function AdminLogin({ onSession }: { onSession: (token: string) => void }) {
 }
 
 function Admin() {
-  const [token, setToken] = useState(() => sessionStorage.getItem("np_admin_token") ?? "");
+  const [token, setToken] = useState(() => {
+    const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const magicLinkToken = fragment.get("access_token");
+    if (magicLinkToken) {
+      sessionStorage.setItem("np_admin_token", magicLinkToken);
+      history.replaceState(null, "", window.location.pathname);
+      return magicLinkToken;
+    }
+    return sessionStorage.getItem("np_admin_token") ?? "";
+  });
   const [range, setRange] = useState<AdminRange>("7d");
   const [metrics, setMetrics] = useState<AdminMetrics | null>(null);
   const [error, setError] = useState("");

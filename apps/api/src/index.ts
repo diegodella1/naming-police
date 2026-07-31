@@ -44,7 +44,8 @@ async function requestAdminOtp(request: Request, env: Env): Promise<Response> {
     return apiError(400, "validation", "Invalid email");
   }
   if (!isAdmin(env, email)) return apiError(403, "unauthorized", "Admin access required");
-  const upstream = await fetch(`${env.SUPABASE_URL}/auth/v1/otp`, {
+  const redirectTo = "https://renamer.diegodella.ar/admin";
+  const upstream = await fetch(`${env.SUPABASE_URL}/auth/v1/otp?redirect_to=${encodeURIComponent(redirectTo)}`, {
     method: "POST",
     headers: { apikey: env.SUPABASE_ANON_KEY, "content-type": "application/json" },
     body: JSON.stringify({ email, create_user: true }),
