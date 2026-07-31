@@ -26,6 +26,13 @@ const DEFAULT_EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "png", "webp", "tif", "tiff", "heic", "heif", "pdf",
 ];
 const KEYRING_SERVICE: &str = "ar.diegodella.namingpolice";
+const SESSION_ACCOUNT: &str = "hosted_session_v1";
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SessionTokens {
+    pub access_token: String,
+    pub refresh_token: String,
+}
 
 #[cfg(debug_assertions)]
 fn hosted_api_url() -> &'static str {
@@ -73,6 +80,7 @@ pub struct Core {
     app: AppHandle,
     watcher: Mutex<Option<RecommendedWatcher>>,
     usage_cache: Mutex<Option<(Instant, UsageSnapshot)>>,
+    pending_session: Mutex<Option<SessionTokens>>,
 }
 
 impl Core {
@@ -82,6 +90,7 @@ impl Core {
             app,
             watcher: Mutex::new(None),
             usage_cache: Mutex::new(None),
+            pending_session: Mutex::new(None),
         })
     }
 
@@ -109,6 +118,9 @@ impl Core {
                 self.watch(&folder)?;
             }
         }
+        for path in self.database.take_rule_upgrade_jobs()? {
+            self.clone().schedule_path(PathBuf::from(path));
+        }
         Ok(())
     }
 
@@ -134,7 +146,7 @@ impl Core {
             settings: self.database.settings()?,
             usage: self.usage_snapshot(),
             watcher_active,
-            authenticated: self.secret("refresh_token").is_ok(),
+            authenticated: self.session().is_ok(),
         })
     }
 
@@ -157,7 +169,7 @@ impl Core {
                 }
             }
         }
-        let token = self.secret("access_token").ok()?;
+        let token = self.session().ok()?.access_token;
         let api_url = hosted_api_url();
         let fetched = tauri::async_runtime::block_on(async {
             reqwest::Client::new()
@@ -375,14 +387,25 @@ impl Core {
             &settings.output_locale,
             &settings.provider,
             &extracted,
+            &path.file_name().unwrap_or_default().to_string_lossy(),
         );
         let analysis = match analysis {
             Ok(result) => result,
+            Err(AppError::AuthRequired) => {
+                self.database
+                    .update_job(&job_id, "waiting_for_auth", None)?;
+                return Ok(());
+            }
             Err(error) => {
                 if settings.provider == "local"
                     || matches!(error, AppError::Offline(_) | AppError::QuotaExceeded)
                 {
-                    ai::local_fallback(&job_id, &preset, &extracted)
+                    ai::local_fallback(
+                        &job_id,
+                        &preset,
+                        &extracted,
+                        &path.file_name().unwrap_or_default().to_string_lossy(),
+                    )
                 } else {
                     self.database
                         .update_job(&job_id, "failed", Some(&error.to_string()))?;
@@ -390,30 +413,34 @@ impl Core {
                 }
             }
         };
-        let mut stem = naming::build_stem(
+        let stem = naming::build_stem(
             &preset,
             &analysis.fields,
             extracted.captured_date.as_deref(),
             None,
         );
         if stem.is_empty() {
-            let fallback = match preset {
-                PresetId::Screenshots => "screenshot",
-                PresetId::TravelPhotos => "foto",
-                PresetId::Invoices => "factura",
-                _ => "documento",
-            };
-            stem = format!(
-                "{}-{}",
-                fallback,
-                extracted.captured_date.as_deref().unwrap_or("sin-fecha")
-            );
+            self.database.update_job(
+                &job_id,
+                "ignored",
+                Some("No hay evidencia suficiente para mejorar el nombre"),
+            )?;
+            return Ok(());
         }
         let extension = path
             .extension()
             .and_then(|value| value.to_str())
             .unwrap_or_default();
         let filename = naming::sanitize_with_extension(&stem, extension)?;
+        let current_name = path.file_name().unwrap_or_default().to_string_lossy();
+        if !naming::should_suggest(&current_name, &filename, analysis.confidence) {
+            self.database.update_job(
+                &job_id,
+                "ignored",
+                Some("El nombre actual es igual o mejor"),
+            )?;
+            return Ok(());
+        }
         let directory = path
             .parent()
             .ok_or_else(|| AppError::Validation("Archivo sin carpeta".into()))?;
@@ -423,13 +450,6 @@ impl Core {
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
-        if proposed_name
-            .eq_ignore_ascii_case(&path.file_name().unwrap_or_default().to_string_lossy())
-        {
-            self.database
-                .update_job(&job_id, "ignored", Some("El nombre ya es descriptivo"))?;
-            return Ok(());
-        }
         let suggestion_id = Uuid::new_v4().to_string();
         let sources = collect_sources(&extracted, &analysis);
         self.database.insert_suggestion(
@@ -480,30 +500,53 @@ impl Core {
         locale: &str,
         provider: &str,
         extracted: &ExtractedContent,
+        current_basename: &str,
     ) -> Result<AnalysisResult> {
         match provider {
-            "local" => Ok(ai::local_fallback(request_id, preset, extracted)),
+            "local" => Ok(ai::local_fallback(
+                request_id,
+                preset,
+                extracted,
+                current_basename,
+            )),
             "byok" => {
                 let key = self.secret("openai_byok")?;
                 tauri::async_runtime::block_on(ai::byok(
-                    &key, request_id, preset, locale, extracted,
+                    &key,
+                    request_id,
+                    preset,
+                    locale,
+                    extracted,
+                    current_basename,
                 ))
             }
             "hosted" => {
-                let Ok(mut token) = self.secret("access_token") else {
-                    return Ok(ai::local_fallback(request_id, preset, extracted));
+                let Ok(mut token) = self.session().map(|session| session.access_token) else {
+                    return Err(AppError::AuthRequired);
                 };
                 let api_url = hosted_api_url();
                 let first = tauri::async_runtime::block_on(ai::hosted(
-                    api_url, &token, request_id, preset, locale, extracted,
+                    api_url,
+                    &token,
+                    request_id,
+                    preset,
+                    locale,
+                    extracted,
+                    current_basename,
                 ));
                 if matches!(&first, Err(AppError::Provider(message)) if message.contains("401")) {
                     let Ok(refreshed) = self.refresh_session() else {
-                        return Ok(ai::local_fallback(request_id, preset, extracted));
+                        return Err(AppError::AuthRequired);
                     };
                     token = refreshed;
                     tauri::async_runtime::block_on(ai::hosted(
-                        api_url, &token, request_id, preset, locale, extracted,
+                        api_url,
+                        &token,
+                        request_id,
+                        preset,
+                        locale,
+                        extracted,
+                        current_basename,
                     ))
                 } else {
                     first
@@ -516,7 +559,7 @@ impl Core {
     fn refresh_session(&self) -> Result<String> {
         let supabase_url = supabase_url()?;
         let anon_key = supabase_anon_key()?;
-        let refresh_token = self.secret("refresh_token")?;
+        let refresh_token = self.session()?.refresh_token;
         let refresh_for_request = refresh_token.clone();
         let response: Value = tauri::async_runtime::block_on(async {
             reqwest::Client::new()
@@ -538,9 +581,148 @@ impl Core {
             .as_str()
             .ok_or_else(|| AppError::Secret("Refresh sin access token".into()))?;
         let next_refresh = response["refresh_token"].as_str().unwrap_or(&refresh_token);
-        self.store_secret("access_token", access_token)?;
-        self.store_secret("refresh_token", next_refresh)?;
+        self.persist_session(&SessionTokens {
+            access_token: access_token.into(),
+            refresh_token: next_refresh.into(),
+        })?;
         Ok(access_token.into())
+    }
+
+    pub async fn request_hosted_otp(&self, email: &str) -> Result<()> {
+        let email = email.trim().to_lowercase();
+        if !email.contains('@') || email.len() > 254 {
+            return Err(AppError::Validation("Email inválido".into()));
+        }
+        let response = reqwest::Client::new()
+            .post(format!("{}/auth/v1/otp", supabase_url()?))
+            .header("apikey", supabase_anon_key()?)
+            .json(&json!({"email":email,"create_user":true}))
+            .send()
+            .await
+            .map_err(|error| AppError::Offline(error.to_string()))?;
+        match response.status().as_u16() {
+            200..=299 => Ok(()),
+            429 => Err(AppError::Provider(
+                "Esperá un minuto antes de pedir otro código".into(),
+            )),
+            status => Err(AppError::Provider(format!(
+                "No se pudo enviar el código ({status})"
+            ))),
+        }
+    }
+
+    pub async fn verify_hosted_otp(self: &Arc<Self>, email: &str, code: &str) -> Result<()> {
+        let email = email.trim().to_lowercase();
+        let code: String = code
+            .chars()
+            .filter(|character| character.is_ascii_digit())
+            .collect();
+        if !(6..=8).contains(&code.len()) {
+            return Err(AppError::Validation(
+                "El código debe tener entre 6 y 8 dígitos".into(),
+            ));
+        }
+        let response = reqwest::Client::new()
+            .post(format!("{}/auth/v1/verify", supabase_url()?))
+            .header("apikey", supabase_anon_key()?)
+            .json(&json!({"email":email,"token":code,"type":"email"}))
+            .send()
+            .await
+            .map_err(|error| AppError::Offline(error.to_string()))?;
+        if !response.status().is_success() {
+            return Err(match response.status().as_u16() {
+                403 => AppError::Validation("Código usado o vencido; pedí uno nuevo".into()),
+                429 => AppError::Provider("Demasiados intentos; esperá un minuto".into()),
+                status => AppError::Provider(format!("No se pudo validar el código ({status})")),
+            });
+        }
+        let body: Value = response
+            .json()
+            .await
+            .map_err(|error| AppError::Provider(error.to_string()))?;
+        let session = SessionTokens {
+            access_token: body["access_token"]
+                .as_str()
+                .ok_or_else(|| AppError::Secret("Respuesta sin access token".into()))?
+                .into(),
+            refresh_token: body["refresh_token"]
+                .as_str()
+                .ok_or_else(|| AppError::Secret("Respuesta sin refresh token".into()))?
+                .into(),
+        };
+        *self
+            .pending_session
+            .lock()
+            .map_err(|_| AppError::Secret("Sesión temporal bloqueada".into()))? =
+            Some(session.clone());
+        self.persist_session(&session)?;
+        *self
+            .pending_session
+            .lock()
+            .map_err(|_| AppError::Secret("Sesión temporal bloqueada".into()))? = None;
+        for path in self.database.requeue_waiting_for_auth()? {
+            self.clone().schedule_path(PathBuf::from(path));
+        }
+        Ok(())
+    }
+
+    pub fn retry_store_hosted_session(self: &Arc<Self>) -> Result<()> {
+        let session = self
+            .pending_session
+            .lock()
+            .map_err(|_| AppError::Secret("Sesión temporal bloqueada".into()))?
+            .clone()
+            .ok_or_else(|| {
+                AppError::Validation("No hay una sesión pendiente para guardar".into())
+            })?;
+        self.persist_session(&session)?;
+        *self
+            .pending_session
+            .lock()
+            .map_err(|_| AppError::Secret("Sesión temporal bloqueada".into()))? = None;
+        for path in self.database.requeue_waiting_for_auth()? {
+            self.clone().schedule_path(PathBuf::from(path));
+        }
+        Ok(())
+    }
+
+    pub fn persist_session(&self, session: &SessionTokens) -> Result<()> {
+        if session.access_token.len() < 20 || session.refresh_token.len() < 20 {
+            return Err(AppError::Validation("Sesión inválida".into()));
+        }
+        let encoded = serde_json::to_string(session)?;
+        self.store_secret(SESSION_ACCOUNT, &encoded)?;
+        if self.secret(SESSION_ACCOUNT)? != encoded {
+            let _ = self.delete_secret(SESSION_ACCOUNT);
+            return Err(AppError::Secret(
+                "Credential Manager no confirmó la sesión".into(),
+            ));
+        }
+        let _ = self.delete_secret("access_token");
+        let _ = self.delete_secret("refresh_token");
+        Ok(())
+    }
+
+    pub fn clear_session(&self) -> Result<()> {
+        self.delete_secret(SESSION_ACCOUNT)?;
+        let _ = self.delete_secret("access_token");
+        let _ = self.delete_secret("refresh_token");
+        if let Ok(mut pending) = self.pending_session.lock() {
+            *pending = None;
+        }
+        Ok(())
+    }
+
+    fn session(&self) -> Result<SessionTokens> {
+        if let Ok(encoded) = self.secret(SESSION_ACCOUNT) {
+            return serde_json::from_str(&encoded).map_err(AppError::from);
+        }
+        let legacy = SessionTokens {
+            access_token: self.secret("access_token")?,
+            refresh_token: self.secret("refresh_token")?,
+        };
+        let _ = self.persist_session(&legacy);
+        Ok(legacy)
     }
 
     pub fn approve(&self, id: &str, edited_name: Option<String>) -> Result<()> {
@@ -649,8 +831,9 @@ impl Core {
         let suggestion = self.database.suggestion_record(id)?;
         let path = Path::new(&suggestion.path);
         Ok(json!({
-            "schema_version":"1",
+            "schema_version":"2",
             "request_id":"<opaque>",
+            "current_basename":path.file_name().unwrap_or_default().to_string_lossy(),
             "media_kind":if path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("pdf")) {"document"} else {"image"},
             "content":"Miniatura JPEG sin EXIF o texto extraído, máximo 20.000 caracteres",
             "metadata":["mime_type","captured_at","GPS reducido si existe"],
@@ -762,7 +945,7 @@ fn parse_preset(value: &str) -> Result<PresetId> {
 
 fn collect_sources(extracted: &ExtractedContent, analysis: &AnalysisResult) -> Vec<String> {
     let mut sources = extracted.sources.clone();
-    if analysis.model != "local-rules-v1" {
+    if analysis.model != "local-rules-v2" {
         sources.push("ai".into());
     }
     sources.sort();

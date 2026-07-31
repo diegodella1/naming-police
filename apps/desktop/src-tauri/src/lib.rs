@@ -139,22 +139,23 @@ fn clear_history(core: State<'_, Arc<Core>>) -> Result<()> {
 }
 
 #[tauri::command]
-fn store_session(
-    core: State<'_, Arc<Core>>,
-    access_token: String,
-    refresh_token: String,
-) -> Result<()> {
-    if access_token.len() < 20 || refresh_token.len() < 20 {
-        return Err(error::AppError::Validation("Sesión inválida".into()));
-    }
-    core.store_secret("access_token", &access_token)?;
-    core.store_secret("refresh_token", &refresh_token)
+async fn request_hosted_otp(core: State<'_, Arc<Core>>, email: String) -> Result<()> {
+    core.request_hosted_otp(&email).await
+}
+
+#[tauri::command]
+async fn verify_hosted_otp(core: State<'_, Arc<Core>>, email: String, code: String) -> Result<()> {
+    core.inner().verify_hosted_otp(&email, &code).await
+}
+
+#[tauri::command]
+fn retry_store_hosted_session(core: State<'_, Arc<Core>>) -> Result<()> {
+    core.inner().retry_store_hosted_session()
 }
 
 #[tauri::command]
 fn sign_out(core: State<'_, Arc<Core>>) -> Result<()> {
-    core.delete_secret("access_token")?;
-    core.delete_secret("refresh_token")
+    core.clear_session()
 }
 
 pub fn run() {
@@ -195,7 +196,9 @@ pub fn run() {
             export_config,
             import_config,
             clear_history,
-            store_session,
+            request_hosted_otp,
+            verify_hosted_otp,
+            retry_store_hosted_session,
             sign_out,
         ])
         .run(tauri::generate_context!())

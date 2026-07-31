@@ -17,6 +17,8 @@ pub enum AppError {
     Offline(String),
     #[error("Cuota agotada")]
     QuotaExceeded,
+    #[error("Hosted AI necesita iniciar sesión")]
+    AuthRequired,
     #[error("Proveedor de IA no disponible: {0}")]
     Provider(String),
     #[error("Operación de sistema falló")]

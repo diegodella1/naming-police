@@ -63,6 +63,18 @@ impl Database {
                 params!["soft_delete_folders", Utc::now().to_rfc3339()],
             )?;
         }
+        let has_v3: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=3)",
+            [],
+            |row| row.get(0),
+        )?;
+        if !has_v3 {
+            transaction.execute_batch(include_str!("../migrations/0003_reanalyze_pending.sql"))?;
+            transaction.execute(
+                "INSERT INTO schema_migrations(version,name,applied_at) VALUES(3,?1,?2)",
+                params!["reanalyze_pending_v2", Utc::now().to_rfc3339()],
+            )?;
+        }
         transaction.commit()?;
         Ok(())
     }
@@ -288,6 +300,29 @@ impl Database {
             params![status, error, Utc::now().to_rfc3339(), id],
         )?;
         Ok(())
+    }
+
+    fn take_job_paths(&self, status: &str) -> Result<Vec<String>> {
+        let mut connection = self.conn()?;
+        let transaction = connection.transaction()?;
+        let paths = {
+            let mut statement = transaction.prepare("SELECT path FROM jobs WHERE status=?1")?;
+            let rows = statement
+                .query_map([status], |row| row.get::<_, String>(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            rows
+        };
+        transaction.execute("DELETE FROM jobs WHERE status=?1", [status])?;
+        transaction.commit()?;
+        Ok(paths)
+    }
+
+    pub fn take_rule_upgrade_jobs(&self) -> Result<Vec<String>> {
+        self.take_job_paths("needs_reanalysis")
+    }
+
+    pub fn requeue_waiting_for_auth(&self) -> Result<Vec<String>> {
+        self.take_job_paths("waiting_for_auth")
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -625,5 +660,63 @@ mod tests {
         assert_eq!(folders[0].preset, "screenshots");
         assert_eq!(folders[0].mode, "observe");
         assert_eq!(folders[0].extensions, vec!["png"]);
+    }
+
+    #[test]
+    fn migration_requeues_old_pending_suggestions_once() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("test.db");
+        {
+            let database = Database::open(&path).unwrap();
+            database
+                .add_folder(
+                    "folder-1",
+                    "/tmp/downloads",
+                    "Downloads",
+                    "general",
+                    "ask",
+                    &["pdf".into()],
+                )
+                .unwrap();
+            database
+                .insert_job(
+                    "job-1",
+                    "folder-1",
+                    "/tmp/downloads/cv.pdf",
+                    "hash",
+                    "extracting",
+                )
+                .unwrap();
+            database
+                .insert_suggestion(
+                    "suggestion-1",
+                    "job-1",
+                    "folder-1",
+                    "/tmp/downloads/cv.pdf",
+                    "cv.pdf",
+                    "documento.pdf",
+                    "document",
+                    None,
+                    0.68,
+                    "old rules",
+                    &["pdf_text".into()],
+                    false,
+                    "hash",
+                    "local",
+                )
+                .unwrap();
+            database
+                .conn()
+                .unwrap()
+                .execute("DELETE FROM schema_migrations WHERE version=3", [])
+                .unwrap();
+        }
+        let database = Database::open(&path).unwrap();
+        assert_eq!(
+            database.take_rule_upgrade_jobs().unwrap(),
+            vec!["/tmp/downloads/cv.pdf"]
+        );
+        assert!(database.take_rule_upgrade_jobs().unwrap().is_empty());
+        assert!(database.list_suggestions().unwrap().is_empty());
     }
 }

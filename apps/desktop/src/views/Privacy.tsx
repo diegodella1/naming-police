@@ -1,5 +1,5 @@
 import { Eye, KeyRound, LockKeyhole, Server, ShieldCheck, WifiOff } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { AppSettings } from "../types";
 
 interface Props {
@@ -10,7 +10,9 @@ interface Props {
   onProvider: (provider: AppSettings["provider"]) => Promise<void>;
   onSaveKey: (key: string) => Promise<void>;
   onDeleteKey: () => Promise<void>;
-  onLogin: (email: string, code?: string) => Promise<"sent" | "verified">;
+  onRequestCode: (email: string) => Promise<void>;
+  onVerify: (email: string, code: string) => Promise<void>;
+  onRetryStore: () => Promise<void>;
   onSignOut: () => Promise<void>;
 }
 
@@ -22,15 +24,31 @@ export function Privacy({
   onProvider,
   onSaveKey,
   onDeleteKey,
-  onLogin,
+  onRequestCode,
+  onVerify,
+  onRetryStore,
   onSignOut,
 }: Props) {
   const [key, setKey] = useState("");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [otpSent, setOtpSent] = useState(false);
+  const [storagePending, setStoragePending] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string>();
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = window.setInterval(() => setCooldown((value) => Math.max(0, value - 1)), 1000);
+    return () => window.clearInterval(timer);
+  }, [cooldown]);
+  const sendCode = async () => {
+    await onRequestCode(email.trim().toLowerCase());
+    setCode("");
+    setOtpSent(true);
+    setStoragePending(false);
+    setCooldown(60);
+  };
   return (
     <section>
       <header className="page-header">
@@ -78,19 +96,39 @@ export function Privacy({
                 if (authBusy) return;
                 setAuthBusy(true);
                 setAuthError(undefined);
-                void onLogin(email, otpSent ? code : undefined)
-                  .then((status) => setOtpSent(status === "sent"))
-                  .catch((cause) => setAuthError(cause instanceof Error ? cause.message : String(cause)))
+                const action = storagePending
+                  ? onRetryStore()
+                  : otpSent
+                    ? onVerify(email.trim().toLowerCase(), code.replace(/\D/g, ""))
+                    : sendCode();
+                void action
+                  .catch((cause) => {
+                    const message = cause instanceof Error ? cause.message : String(cause);
+                    setAuthError(message);
+                    if (otpSent && /segura|secret|credential|keyring|almacen/i.test(message)) {
+                      setStoragePending(true);
+                    }
+                  })
                   .finally(() => setAuthBusy(false));
               }}
             >
               <p>Ingresá con código email. Sin contraseña ni navegador externo.</p>
-              <input type="email" required placeholder="vos@ejemplo.com" value={email} onChange={(event) => setEmail(event.target.value)} />
-              {otpSent ? <input required inputMode="numeric" pattern="[0-9]{6}" placeholder="Código de 6 dígitos" value={code} onChange={(event) => setCode(event.target.value)} /> : null}
+              <input type="email" required disabled={otpSent || storagePending} placeholder="vos@ejemplo.com" value={email} onChange={(event) => setEmail(event.target.value)} />
+              {otpSent && !storagePending ? <input required inputMode="numeric" pattern="[0-9]{6,8}" placeholder="Código de 6–8 dígitos" value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 8))} /> : null}
+              {storagePending ? <p className="inline-error" role="status">Código validado. Falta guardar la sesión en Credential Manager.</p> : null}
               {authError ? <p className="inline-error" role="alert">{authError}</p> : null}
               <button className="primary" type="submit" disabled={authBusy}>
-                {authBusy ? "Procesando…" : otpSent ? "Verificar código" : "Enviar código"}
+                {authBusy ? "Procesando…" : storagePending ? "Reintentar guardar sesión" : otpSent ? "Verificar código" : "Enviar código"}
               </button>
+              {otpSent && !storagePending ? (
+                <button className="ghost" type="button" disabled={authBusy || cooldown > 0} onClick={() => {
+                  setAuthBusy(true);
+                  setAuthError(undefined);
+                  void sendCode().catch((cause) => setAuthError(cause instanceof Error ? cause.message : String(cause))).finally(() => setAuthBusy(false));
+                }}>
+                  {cooldown > 0 ? `Reenviar en ${cooldown}s` : "Enviar código nuevo"}
+                </button>
+              ) : null}
             </form>
           )}
         </article>
@@ -109,6 +147,7 @@ export function Privacy({
             <li><LockKeyhole size={15} /> Nunca enviamos rutas locales.</li>
             <li><LockKeyhole size={15} /> Imágenes: JPEG reducido sin EXIF.</li>
             <li><LockKeyhole size={15} /> PDF: texto extraído; nunca PDF original.</li>
+            <li><LockKeyhole size={15} /> Hosted: nombre actual sin carpeta ni ruta, para evitar propuestas peores.</li>
           </ul>
           <p>OpenAI puede retener contenido en abuse-monitoring logs hasta 30 días según tu configuración contractual. Naming Police no persiste contenido.</p>
         </article>

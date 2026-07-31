@@ -167,6 +167,10 @@ pub struct AnalysisFields {
     pub currency: Option<FieldEvidence>,
     pub amount: Option<FieldEvidence>,
     pub invoice_number: Option<FieldEvidence>,
+    pub person: Option<FieldEvidence>,
+    pub role: Option<FieldEvidence>,
+    pub organization: Option<FieldEvidence>,
+    pub document_title: Option<FieldEvidence>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

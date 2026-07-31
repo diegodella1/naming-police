@@ -1,4 +1,5 @@
-export const SCHEMA_VERSION = "1" as const;
+export const LEGACY_SCHEMA_VERSION = "1" as const;
+export const SCHEMA_VERSION = "2" as const;
 
 export type Locale = "es" | "en";
 export type PresetId =
@@ -24,6 +25,7 @@ export type JobStatus =
   | "waiting_for_stability"
   | "extracting"
   | "awaiting_ai"
+  | "waiting_for_auth"
   | "suggested"
   | "approved"
   | "renamed"
@@ -49,6 +51,10 @@ export interface AnalysisFields {
   currency?: FieldEvidence;
   amount?: FieldEvidence;
   invoice_number?: FieldEvidence;
+  person?: FieldEvidence;
+  role?: FieldEvidence;
+  organization?: FieldEvidence;
+  document_title?: FieldEvidence;
 }
 
 export interface SafeMetadata {
@@ -62,7 +68,7 @@ export interface SafeMetadata {
 }
 
 export interface AnalysisRequestV1 {
-  schema_version: typeof SCHEMA_VERSION;
+  schema_version: typeof LEGACY_SCHEMA_VERSION;
   request_id: string;
   preset: PresetId;
   locale: Locale;
@@ -72,8 +78,15 @@ export interface AnalysisRequestV1 {
   extracted_text?: string;
 }
 
-export interface AnalysisResultV1 {
+export interface AnalysisRequestV2 extends Omit<AnalysisRequestV1, "schema_version"> {
   schema_version: typeof SCHEMA_VERSION;
+  current_basename: string;
+}
+
+export type AnalysisRequest = AnalysisRequestV1 | AnalysisRequestV2;
+
+export interface AnalysisResultV1 {
+  schema_version: typeof LEGACY_SCHEMA_VERSION | typeof SCHEMA_VERSION;
   request_id: string;
   fields: AnalysisFields;
   confidence: number;
@@ -134,7 +147,9 @@ export function assertAnalysisResult(value: unknown): asserts value is AnalysisR
   for (const key of Object.keys(record)) {
     if (!allowedTopLevelKeys.has(key)) throw new Error(`Unexpected field: ${key}`);
   }
-  if (record.schema_version !== SCHEMA_VERSION) throw new Error("Unsupported schema");
+  if (![LEGACY_SCHEMA_VERSION, SCHEMA_VERSION].includes(record.schema_version as "1" | "2")) {
+    throw new Error("Unsupported schema");
+  }
   if (typeof record.request_id !== "string") throw new Error("Missing request_id");
   if (typeof record.confidence !== "number" || record.confidence < 0 || record.confidence > 1) {
     throw new Error("Invalid confidence");

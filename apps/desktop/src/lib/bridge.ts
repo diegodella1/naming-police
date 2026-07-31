@@ -53,7 +53,9 @@ export const bridge = {
   exportConfig: () => command<string>("export_config"),
   importConfig: (value: string) => command<void>("import_config", { value }),
   clearHistory: () => command<void>("clear_history"),
-  storeSession: (accessToken: string, refreshToken: string) =>
-    command<void>("store_session", { accessToken, refreshToken }),
+  requestHostedOtp: (email: string) => command<void>("request_hosted_otp", { email }),
+  verifyHostedOtp: (email: string, code: string) =>
+    command<void>("verify_hosted_otp", { email, code }),
+  retryStoreHostedSession: () => command<void>("retry_store_hosted_session"),
   signOut: () => command<void>("sign_out"),
 };

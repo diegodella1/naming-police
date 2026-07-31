@@ -27,4 +27,17 @@ describe("analysis request validation", () => {
       validateRequest({ ...base, extracted_text: "x".repeat(20_001) }),
     ).toThrow("text_too_large");
   });
+
+  it("accepts v2 with a basename and rejects paths", () => {
+    expect(validateRequest({
+      ...base,
+      schema_version: "2",
+      current_basename: "cv-diego-dell-agostino.pdf",
+    }).schema_version).toBe("2");
+    expect(() => validateRequest({
+      ...base,
+      schema_version: "2",
+      current_basename: "C:\\Users\\diego\\cv.pdf",
+    })).toThrow("invalid_basename");
+  });
 });
