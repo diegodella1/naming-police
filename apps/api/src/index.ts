@@ -7,7 +7,9 @@ import { finalizeQuota, getUsage, reserveQuota } from "./quota";
 function requestOrigin(request: Request, env: Env): string {
   const origin = request.headers.get("origin");
   const allowedOrigins = env.ALLOWED_ORIGIN.split(",").map((value) => value.trim());
-  return origin && allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
+  return origin && allowedOrigins.includes(origin)
+    ? origin
+    : (allowedOrigins[0] ?? "tauri://localhost");
 }
 
 async function analyze(request: Request, env: Env, userId: string): Promise<Response> {
