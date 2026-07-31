@@ -1,5 +1,5 @@
 use std::{
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     thread,
     time::Duration,
 };
@@ -26,12 +26,7 @@ pub fn validate_folder(path: &Path) -> Result<PathBuf> {
     if !canonical.is_dir() {
         return Err(AppError::Validation("La ruta no es una carpeta".into()));
     }
-    if canonical.components().any(|component| {
-        matches!(
-            component,
-            Component::ParentDir | Component::RootDir if canonical.components().count() == 1
-        )
-    }) {
+    if canonical.parent().is_none() {
         return Err(AppError::UnsafeFolder(
             "No se puede vigilar una raíz".into(),
         ));
@@ -66,7 +61,7 @@ pub fn validate_folder(path: &Path) -> Result<PathBuf> {
             "Carpeta de sistema, aplicación o biblioteca administrada".into(),
         ));
     }
-    if normalized.starts_with("\\\\") || normalized.starts_with("//") {
+    if is_network_path(&canonical) {
         return Err(AppError::UnsafeFolder(
             "Unidades de red no están soportadas".into(),
         ));
@@ -97,6 +92,26 @@ pub fn validate_folder(path: &Path) -> Result<PathBuf> {
         }
     }
     Ok(canonical)
+}
+
+#[cfg(target_os = "windows")]
+fn is_network_path(path: &Path) -> bool {
+    use std::path::Prefix;
+
+    matches!(
+        path.components().next(),
+        Some(std::path::Component::Prefix(prefix))
+            if matches!(
+                prefix.kind(),
+                Prefix::UNC(_, _) | Prefix::VerbatimUNC(_, _) | Prefix::DeviceNS(_)
+            )
+    )
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_network_path(path: &Path) -> bool {
+    let normalized = path.to_string_lossy();
+    normalized.starts_with("//")
 }
 
 pub fn wait_until_stable(path: &Path) -> Result<()> {
@@ -150,5 +165,19 @@ mod tests {
             Path::new("/tmp/image.JPEG"),
             &["jpg".into(), "jpeg".into()]
         ));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_local_verbatim_paths_are_not_network_paths() {
+        assert!(!is_network_path(Path::new(r"\\?\C:\Users\Diego\Downloads")));
+        assert!(!is_network_path(Path::new(r"C:\Users\Diego\Downloads")));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_unc_paths_are_network_paths() {
+        assert!(is_network_path(Path::new(r"\\server\share\files")));
+        assert!(is_network_path(Path::new(r"\\?\UNC\server\share\files")));
     }
 }
