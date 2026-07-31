@@ -12,7 +12,6 @@ target/
 *.db-wal
 **/src-tauri/gen/
 apps/desktop/src-tauri/target/
-apps/desktop/src-tauri/icons/
 *.tsbuildinfo
 apps/*/vite.config.js
 apps/*/vite.config.d.ts
