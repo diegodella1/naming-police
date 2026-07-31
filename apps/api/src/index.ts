@@ -26,6 +26,15 @@ function isAdmin(env: Env, email?: string): boolean {
   return Boolean(email && adminEmails(env).includes(email.toLowerCase()));
 }
 
+async function hasActiveSupabaseSession(request: Request, env: Env): Promise<boolean> {
+  const authorization = request.headers.get("authorization");
+  if (!authorization) return false;
+  const response = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, {
+    headers: { apikey: env.SUPABASE_ANON_KEY, authorization },
+  });
+  return response.ok;
+}
+
 async function bodyEmail(request: Request): Promise<{ email: string; token?: string }> {
   const body = (await request.json()) as { email?: unknown; token?: unknown };
   const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
@@ -237,7 +246,7 @@ export default {
     } else if (url.pathname === "/v1/geocode" && request.method === "GET") {
       response = await geocode(request, env);
     } else if (url.pathname === "/v1/admin/metrics" && request.method === "GET") {
-      if (!isAdmin(env, user.email)) {
+      if (!isAdmin(env, user.email) || !(await hasActiveSupabaseSession(request, env))) {
         response = apiError(403, "unauthorized", "Admin access required");
       } else {
         try {
