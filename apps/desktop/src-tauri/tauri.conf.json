@@ -1,0 +1,54 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Naming Police",
+  "version": "0.1.0",
+  "identifier": "ar.diegodella.namingpolice",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Naming Police",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 800,
+        "minHeight": 620,
+        "resizable": true,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost https://*.supabase.co https://api.renamer.diegodella.ar https://downloads.renamer.diegodella.ar"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["dmg", "app", "msi", "nsis"],
+    "createUpdaterArtifacts": true,
+    "copyright": "Copyright © 2026 Diego Dell’Agostino",
+    "category": "Utility",
+    "shortDescription": "Useful names for local files",
+    "longDescription": "Naming Police safely proposes descriptive names for images and PDFs in selected local folders.",
+    "macOS": {
+      "hardenedRuntime": true,
+      "signingIdentity": "-",
+      "entitlements": "Entitlements.plist",
+      "minimumSystemVersion": "12.0"
+    },
+    "windows": {
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "http://timestamp.digicert.com"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": ["https://downloads.renamer.diegodella.ar/latest.json"],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWcgcHVibGljIGtleTogOEFENjUwQUE2NUE3NkQzRApSV1E5YmFkbHFsRFdpbnhwdGs0Qm8yR3dTeDhxWGVFSzI2TVQ0Ly83enFobi9sM1pZVnY2QjgyYQo="
+    }
+  }
+}
