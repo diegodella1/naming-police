@@ -12,19 +12,27 @@ export async function authenticate(request: Request, env: Env): Promise<Authenti
   const authorization = request.headers.get("authorization");
   if (!authorization?.startsWith("Bearer ")) throw new Error("missing_token");
   const token = authorization.slice("Bearer ".length);
-  const jwksUrl = `${env.SUPABASE_URL}/auth/v1/.well-known/jwks.json`;
-  let jwks = jwksByUrl.get(jwksUrl);
-  if (!jwks) {
-    jwks = createRemoteJWKSet(new URL(jwksUrl));
-    jwksByUrl.set(jwksUrl, jwks);
-  }
-  const { payload } = await jwtVerify(token, jwks, {
+  const verificationKey = env.SUPABASE_JWT_SECRET
+    ? new TextEncoder().encode(env.SUPABASE_JWT_SECRET)
+    : remoteJwks(env);
+  const { payload } = await jwtVerify(token, verificationKey, {
     issuer: env.SUPABASE_JWT_ISSUER,
     audience: "authenticated",
+    ...(env.SUPABASE_JWT_SECRET ? { algorithms: ["HS256"] } : {}),
   });
   if (!payload.sub) throw new Error("missing_subject");
   return {
     id: payload.sub,
     ...(typeof payload.email === "string" ? { email: payload.email } : {}),
   };
+}
+
+function remoteJwks(env: Env): ReturnType<typeof createRemoteJWKSet> {
+  const jwksUrl = `${env.SUPABASE_URL}/auth/v1/.well-known/jwks.json`;
+  let jwks = jwksByUrl.get(jwksUrl);
+  if (!jwks) {
+    jwks = createRemoteJWKSet(new URL(jwksUrl));
+    jwksByUrl.set(jwksUrl, jwks);
+  }
+  return jwks;
 }

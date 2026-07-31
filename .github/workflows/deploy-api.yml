@@ -39,12 +39,14 @@ jobs:
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SUPABASE_JWT_ISSUER: ${{ secrets.SUPABASE_JWT_ISSUER }}
+          SUPABASE_JWT_SECRET: ${{ secrets.SUPABASE_JWT_SECRET }}
         run: |
           printf '%s' "$OPENAI_API_KEY" | pnpm --filter @naming-police/api exec wrangler secret put OPENAI_API_KEY
           printf '%s' "$SUPABASE_URL" | pnpm --filter @naming-police/api exec wrangler secret put SUPABASE_URL
           printf '%s' "$SUPABASE_ANON_KEY" | pnpm --filter @naming-police/api exec wrangler secret put SUPABASE_ANON_KEY
           printf '%s' "$SUPABASE_SERVICE_ROLE_KEY" | pnpm --filter @naming-police/api exec wrangler secret put SUPABASE_SERVICE_ROLE_KEY
           printf '%s' "$SUPABASE_JWT_ISSUER" | pnpm --filter @naming-police/api exec wrangler secret put SUPABASE_JWT_ISSUER
+          printf '%s' "$SUPABASE_JWT_SECRET" | pnpm --filter @naming-police/api exec wrangler secret put SUPABASE_JWT_SECRET
       - name: Deploy Worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

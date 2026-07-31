@@ -33,6 +33,7 @@ Hosted API:
 - `SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `SUPABASE_JWT_ISSUER`
+- `SUPABASE_JWT_SECRET` for legacy self-hosted HS256 projects
 - `CLOUDFLARE_API_TOKEN` with Workers Scripts and Routes write access
 - `CLOUDFLARE_ACCOUNT_ID`
 

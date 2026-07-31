@@ -5,6 +5,7 @@ export interface Env {
   SUPABASE_ANON_KEY: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
   SUPABASE_JWT_ISSUER: string;
+  SUPABASE_JWT_SECRET?: string;
   MONTHLY_QUOTA: string;
   MAX_PAYLOAD_BYTES: string;
   ALLOWED_ORIGIN: string;
